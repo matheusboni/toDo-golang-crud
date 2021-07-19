@@ -1,16 +1,22 @@
 package handler
 
 import (
-	"fmt"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"toDo-golang-crud/model"
 	"toDo-golang-crud/repository"
 )
 
-const EmptyPath = ""
+const (
+	EmptyPath = ""
+	http500 = "INTERNAL_ERROR"
+	http400 = "BAD_REQUEST"
+	http404 = "NOT_FOUND"
+)
 
-type RouteHandler struct {}
+type RouteHandler struct {
+	Repository *repository.DBConnection
+}
 
 func (r *RouteHandler) SetupRouter(e *gin.Engine) *gin.Engine {
 	root := e.Group("/todo-api/todos")
@@ -27,19 +33,34 @@ func (r *RouteHandler) SetupRouter(e *gin.Engine) *gin.Engine {
 func (r *RouteHandler) Create(c *gin.Context) {
 	var body model.ToDo
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, HandleError(http400, err.Error()))
 		return
 	}
 
-	c.JSON(http.StatusCreated, repository.Save(&body))
+	saved, err := r.Repository.Save(&body)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, HandleError(http500, err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusCreated, saved)
 }
 
 func (r *RouteHandler) GetOne(c *gin.Context) {
 	id := c.Param("id")
-	current := repository.Get(id)
+	current, err, is404 := r.Repository.GetById(id)
 
-	if current.Id == "" {
-		c.JSON(http.StatusNotFound, _HandleNotFound(id))
+	if err != nil {
+
+		var httpStatus = http.StatusInternalServerError
+		var code = http500
+		if is404 {
+			httpStatus = http.StatusNotFound
+			code = http404
+		}
+
+		c.JSON(httpStatus, HandleError(code, err.Error()))
 		return
 	}
 
@@ -47,7 +68,23 @@ func (r *RouteHandler) GetOne(c *gin.Context) {
 }
 
 func (r *RouteHandler) GetAll(c *gin.Context) {
-	c.JSON(http.StatusOK, repository.GetALl())
+
+	todos, err, is404 := r.Repository.GetALl()
+
+	if err != nil {
+
+		var httpStatus = http.StatusInternalServerError
+		var code = http500
+		if is404 {
+			httpStatus = http.StatusNotFound
+			code = http404
+		}
+
+		c.JSON(httpStatus, HandleError(code, err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, todos)
 }
 
 func (r *RouteHandler) Put(c *gin.Context) {
@@ -55,27 +92,47 @@ func (r *RouteHandler) Put(c *gin.Context) {
 	var body model.ToDo
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, HandleError(http400, err.Error()))
 		return
 	}
 
-	current := repository.Get(id)
+	current, err, is404 := r.Repository.GetById(id)
 
-	if current.Id != "" {
-		body.Id = current.Id
-	} else {
-		c.JSON(http.StatusNotFound, _HandleNotFound(id))
+	if err != nil {
+
+		var httpStatus = http.StatusInternalServerError
+		var code = http500
+		if is404 {
+			httpStatus = http.StatusNotFound
+			code = http404
+		}
+
+		c.JSON(httpStatus, HandleError(code, err.Error()))
 		return
 	}
 
-	c.JSON(http.StatusCreated, repository.Put(&body))
+	body.Id = current.Id
+	updated, err := r.Repository.Put(&body)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, HandleError(http500, err.Error()))
+	}
+
+	c.JSON(http.StatusOK, updated)
 }
 
 func (r *RouteHandler) Delete(c *gin.Context) {
-	repository.Delete(c.Param("id"))
+	err := r.Repository.Delete(c.Param("id"))
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, HandleError(http500, err.Error()))
+		return
+	}
+
 	c.Status(http.StatusNoContent)
 }
 
-func _HandleNotFound(id string) map[string]interface{} {
-	return map[string]interface{}{"code": "NOT_FOUND", "message": fmt.Sprintf("ToDo with id: %s was not found", id)}
+
+func HandleError(code string, msg string) map[string]interface{} {
+	return map[string]interface{}{"code": code, "message": msg}
 }
